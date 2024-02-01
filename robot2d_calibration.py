@@ -150,6 +150,7 @@ def collect_online_calibration_data():
     # Modify camera configuration
     device_config = pykinect.default_configuration
     device_config.color_resolution = pykinect.K4A_COLOR_RESOLUTION_1080P
+    device_config.depth_mode = pykinect.K4A_DEPTH_MODE_OFF
 
     # Start device
     device = pykinect.start_device(config=device_config)
@@ -170,12 +171,15 @@ def collect_online_calibration_data():
     joint_angles_list = []
 
     cv2.namedWindow("Calib Image", cv2.WINDOW_NORMAL)
-
+    cv2.namedWindow("Raw Image", cv2.WINDOW_NORMAL)
     for i in range(6):
         for j in range(6):
             for k in range(13):
-                mc.send_coords([x + i * 20.0, y + j * 40.0, 190, -180.0, 0.0, theta_robot + k * 15.0], 50, 1)
-                time.sleep(2)
+                mc.send_coords([x + i * 20.0, y + j * 40.0, 190, -180.0, 0.0, theta_robot + k * 15.0], 80, 1)
+                if k == 0:
+                    time.sleep(5)
+                else:
+                    time.sleep(2)
                 # Get capture
                 capture = device.update()
                 # Get the color image from the capture
@@ -183,7 +187,7 @@ def collect_online_calibration_data():
 
                 if not ret:
                     continue
-                
+                cv2.imshow("Raw Image", color_image)
                 grayscale_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
                 apriltags = at_detector.detect(grayscale_image)
 
@@ -200,6 +204,7 @@ def collect_online_calibration_data():
                 cv2.circle(color_image, (int(cX), int(cY)), 5, (0, 0, 255), -1)
                 
                 cv2.imshow("Calib Image", color_image)
+                cv2.waitKey(1000)
                 robot_coords = mc.get_coords()
                 print(f"Robot Coords: {robot_coords}")
                 print(f"Image Coords: {image_coords}")

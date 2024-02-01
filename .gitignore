@@ -3,3 +3,5 @@ runs/
 *.png
 *.pth
 *.pickle
+*.jpg
+*.npy

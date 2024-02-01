@@ -2,14 +2,12 @@ import cv2
 import numpy as np
 import torch
 import argparse
-import time
-from pupil_apriltags import Detector
-from utils.geometry_utils import get_april_tags_2d_coords_target
-from utils.graphics_utils import draw_apriltag, draw_text
-from calibration.models import Robot2DCalibrationNN
-from calibration.models import evaluate_model
+from utils.graphics_utils import draw_text
+from calibration.models import Robot2DCalibrationNN, evaluate_model
 import pykinect_azure as pykinect
 from pymycobot.mycobot import MyCobot
+from utils.vlm_detection_util import detect_object
+from utils.robot_utils import *
 
 IMAGE_THETA_ZERO_POINT = -130.0
 IMAGE_THETA_NORMALIZER = 130.0
@@ -27,6 +25,7 @@ IMAGE_HEIGHT = 1080
 def parse_args():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("--query", help="Prompt for the object to pickup", required=True)
     parser.add_argument("--joint_angles_file", help="File containing joint angles", default="calibration/angles.txt")
     parser.add_argument("--coordinates_file", help="File containing 6DoF coordinates", default="calibration/coords.txt")
     parser.add_argument("--starting_id", help="Starting Tag Id", default=14)
@@ -35,25 +34,10 @@ def parse_args():
 
     return parser.parse_args()
 
-def denormalize(coords_arr):
-    coords_arr[:, 0] = coords_arr[:, 0] * ROBOT_X_COORD_NORMALIZER + ROBOT_X_COORD_ZERO_POINT
-    coords_arr[:, 1] = coords_arr[:, 1] * ROBOT_Y_COORD_NORMALIZER + ROBOT_Y_COORD_ZERO_POINT
-    coords_arr[:, 2] = coords_arr[:, 2] * ROBOT_THETA_NORMALIZER + ROBOT_THETA_ZERO_POINT
-    return coords_arr
-
 if __name__ == "__main__":
     args = parse_args()
 
     mc = MyCobot("COM7", 115200)
-
-    at_detector = Detector(
-    families="tag36h11",
-    nthreads=1,
-    quad_decimate=1.0,
-    quad_sigma=0.0,
-    refine_edges=1,
-    decode_sharpening=0.25,
-    debug=0)
 
     # Initialize the library, if the library is not found, add the library path as argument
     pykinect.initialize_libraries()
@@ -81,14 +65,7 @@ if __name__ == "__main__":
     image_height = color_image.shape[0]
     print(image_width, image_height)
 
-    grayscale_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
-    apriltags = at_detector.detect(grayscale_image)
-    for apriltag in apriltags:
-        draw_apriltag(color_image, apriltag)
-    if len(apriltags) < 2:
-        print("Not Enough Tags")
-        exit()
-    image_coords = get_april_tags_2d_coords_target(apriltags)
+    color_image, image_coords,_ = detect_object(args.query, color_image)
     if image_coords == None:
         print("Cannot get image coords")
         exit()
@@ -97,38 +74,14 @@ if __name__ == "__main__":
 
     print(image_coords)
 
-    normX = (cX - image_width / 2) / (image_width / 2)
-    normY = (cY - image_height / 2) / (image_height / 2)
-    normTheta = (theta - IMAGE_THETA_ZERO_POINT) / IMAGE_THETA_NORMALIZER
+    normX, normY, normTheta = normalize_camera_coord(cX, cY, theta, image_width, image_height)
 
     input_array = np.array([[normX, normY, normTheta]]).astype(np.float32)
 
     predicted_val = evaluate_model(calibration_model, input_array)
-    denorm_coords = denormalize(predicted_val)
+    denorm_coords = denormalize_robot_coord(predicted_val)
     draw_text(color_image, f"X: {denorm_coords[0, 0]:.2f}, Y: {denorm_coords[0, 1]:.2f}, Theta: {denorm_coords[0, 2]:.2f}", 1000, 100)
-    # cv2.imshow('Calibration', color_image)
+    cv2.imshow('Calibration', color_image)
+    cv2.waitKey(0)
 
-    mc.send_coords([denorm_coords[0, 0], denorm_coords[0, 1], 190, -180.0, 0.0, denorm_coords[0, 2]], 30, 1)
-    time.sleep(5)
-
-    mc.send_coords([denorm_coords[0, 0], denorm_coords[0, 1], 170, -180.0, 0.0, denorm_coords[0, 2]], 50, 1)
-    time.sleep(2)
-
-    mc.set_gripper_mode(0)
-    time.sleep(2)
-    mc.set_gripper_state(1, 50)
-    time.sleep(2)
-
-    mc.send_coords([denorm_coords[0, 0], denorm_coords[0, 1], 190, -180.0, 0.0, denorm_coords[0, 2]], 50, 1)
-    time.sleep(2)
-
-    mc.send_coords([200, 0, 190, -180.0, 0.0, -90.0], 50, 1)
-    time.sleep(5)
-
-    mc.set_gripper_mode(0)
-    time.sleep(2)
-    mc.set_gripper_state(0, 50)
-    time.sleep(2)
-
-    # Press q key to stop
-    # cv2.waitKey(0)
+    pick_and_place(mc, denorm_coords)
